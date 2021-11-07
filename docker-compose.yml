@@ -58,6 +58,7 @@ services:
     networks:
       - "devicefarmer"
     volumes:
+      - "./deployment/adb:/root/.android"
       - "/dev/bus/usb:/dev/bus/usb"
     privileged: true
 
