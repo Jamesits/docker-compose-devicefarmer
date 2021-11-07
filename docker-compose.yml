@@ -1,0 +1,225 @@
+# Docker Compose config for DeviceFarmer (formerly OpenSTF).
+# References:
+# - https://github.com/DeviceFarmer/stf/blob/master/doc/DEPLOYMENT.md
+# - https://github.com/DeviceFarmer/stf/blob/master/docker-compose.yaml
+# - https://github.com/devicefarmer/setup-examples
+version: "2.4"
+
+networks:
+  devicefarmer:
+
+services:
+  ## http reverse proxy
+  nginx:
+    image: "nginx:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "./nginx.conf:/etc/nginx/nginx.conf:ro"
+
+  ## the database; can be a cluster too
+  rethinkdb:
+    image: "rethinkdb:2.4"
+    restart: "always"
+    volumes:
+      - "./deployment/rethinkdb:/data"
+    networks:
+      - "devicefarmer"
+    # Note: "--cache-size" is the memory allocated for RethinkDB in MiB.
+    command: "rethinkdb --bind all --cache-size ${RETHINKDB_CACHE_SIZE} --initial-password ${RETHINKDB_ENV_AUTHKEY} --no-update-check --log-file /data/rethinkdb.log"
+
+  ## database proxy service (simple TCP forwarder; listens on 28015/tcp by default; not required)
+  # rethinkdb-proxy:
+  #   image: "devicefarmer/ambassador:latest"
+  #   restart: "always"
+  #   networks:
+  #     - "devicefarmer"
+  #   environment:
+  #     - "RETHINKDB_PORT_28015_TCP=tcp://rethinkdb:28015"
+
+  # database migration tool (will quit after starting for a while)
+  stf-migrate:
+    image: "devicefarmer/stf:latest"
+    restart: "on-failure"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./stf.env"
+      - "./rethinkdb.env"
+    command: "stf migrate"
+
+  adbd: # listen on 5037/tcp
+    image: "devicefarmer/adb:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    volumes:
+      - "/dev/bus/usb:/dev/bus/usb"
+    privileged: true
+
+  # The app unit provides the main HTTP server and it serves all static resources including images, scripts and stylesheets.
+  # can run multiple instances on one host and be load balanced.
+  stf-app:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./stf-session.env"
+      - "./rethinkdb.env"
+    command: "stf app --port 80 --auth-url ${STF_AUTH_ENDPOINT} --websocket-url ${STF_WEBSOCKET_ENDPOINT}"
+
+  # With the mock auth provider the user simply enters their name and email and the system trusts those values.
+  # This is what the development version uses by default. Obviously not very secure, but very easy to set up if
+  # you can trust your users.
+  # Other supported auth options: https://github.com/DeviceFarmer/stf/blob/master/doc/DEPLOYMENT.md#stf-authservice
+  # can run multiple instances on one host and be load balanced.
+  stf-auth-mock:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./stf-session.env"
+      - "./rethinkdb.env"
+    command: "stf auth-mock --port 80 --app-url ${STF_APP_ENDPOINT}"
+
+  # The processor is the main workhorse of STF. It acts as a bridge between the devices and the app, and nearly all
+  # communication goes through it.
+  # can run multiple instances on one host and be load balanced.
+  stf-processor:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./rethinkdb.env"
+    command: "stf processor processor-1 --connect-app-dealer tcp://stf-triproxy-app:7160 --connect-dev-dealer tcp://stf-triproxy-dev:7260"
+
+  # The provider unit connects to ADB and start worker processes for each device. It then sends and receives commands from the processor.
+  # one instance per physical host.
+  stf-provider-default:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./tls-self-signed.env"
+      - "./rethinkdb.env"
+    command: "stf provider --name ${STF_DEFAULT_PROVIDER_NAME} --connect-sub tcp://stf-triproxy-dev:7250 --connect-push tcp://stf-triproxy-dev:7270 --storage-url ${STF_STORAGE_ENDPOINT} --public-ip ${STF_DEFAULT_PROVIDER_PUBLIC_IP} --min-port=15000 --max-port=25000 --heartbeat-interval 10000 --screen-ws-url-pattern \"${STF_WEBSOCKET_ENDPOINT}d/${STF_DEFAULT_PROVIDER_URL_PREFIX}/<%= serial %>/<%= publicPort %>/\" --adb-host adbd ${STF_DEFAULT_PROVIDER_EXTRA_ARGS}"
+
+  # The reaper unit receives heartbeat events from device workers, and marks lost devices as absent until a heartbeat is received again.
+  # one instance globally.
+  stf-reaper:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./rethinkdb.env"
+    command: "stf reaper dev --connect-push tcp://stf-triproxy-dev:7270 --connect-sub tcp://stf-triproxy-app:7150 --heartbeat-timeout 30000"
+
+  # The APK storage plugin loads raw blobs from the main storage unit and allows additional actions to be performed on APK files, such as retrieving the AndroidManifest.xml.
+  # can run multiple instances on one host and be load balanced.
+  stf-storage-plugin-apk:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./tls-self-signed.env"
+    command: "stf storage-plugin-apk --port 80 --storage-url ${STF_STORAGE_ENDPOINT}"
+
+  # The image storage plugin loads raw blobs from the main storage unit and and allows images to be resized using parameters.
+  # can run multiple instances on one host and be load balanced.
+  stf-storage-plugin-image:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./tls-self-signed.env"
+    command: "stf storage-plugin-image --port 80 --storage-url ${STF_STORAGE_ENDPOINT}"
+
+  # Storage backend.
+  # Other supported options: https://github.com/DeviceFarmer/stf/blob/master/doc/DEPLOYMENT.md#stf-storage-s3service
+  # one instance globally.
+  stf-storage-temp:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    volumes:
+      - "./deployment/stf-storage:/data"
+    command: "stf storage-temp --port 80 --save-dir /data"
+
+  # can run multiple instances on one host (give a comma separated list to the provider).
+  stf-triproxy-app:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    command: "stf triproxy app --bind-pub \"tcp://*:7150\" --bind-dealer \"tcp://*:7160\" --bind-pull \"tcp://*:7170\""
+
+  # can run multiple instances on one host (give a comma separated list to the provider).
+  stf-triproxy-dev:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    command: "stf triproxy dev --bind-pub \"tcp://*:7250\" --bind-dealer \"tcp://*:7260\" --bind-pull \"tcp://*:7270\""
+
+  # The websocket unit provides the communication layer between client-side JavaScript and the server-side ZeroMQ+Protobuf combination. Almost every action in STF goes through the websocket unit.
+  # can run multiple instances on one host and be load balanced.
+  stf-websocket:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./tls-self-signed.env"
+      - "./rethinkdb.env"
+      - "./stf-session.env"
+    command: "stf websocket --port 80 --storage-url ${STF_STORAGE_ENDPOINT} --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170"
+
+  # The api unit provides all the major RESTful APIs for STF. Users can generate their personal access token from STF UI and can use that token to access these api from any interface.
+  # can run multiple instances on one host and be load balanced.
+  stf-api:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./rethinkdb.env"
+      - "./stf-session.env"
+    command: "stf api --port 80 --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170 --connect-sub-dev tcp://stf-triproxy-dev:7250 --connect-push-dev tcp://stf-triproxy-dev:7270"
+
+  # The groups-engine unit is the core of the device booking/partitioning system, it is made of four main functions ensuring in particular the consistency of operations ordered by the client side on groups (i.e. a group is an association of users, devices and a specification of time)
+  # one instance globally
+  stf-groups-engine:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./rethinkdb.env"
+      - "./stf-session.env"
+    command: "stf groups-engine --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170 --connect-sub-dev tcp://stf-triproxy-dev:7250 --connect-push-dev tcp://stf-triproxy-dev:7270"
+
+  # logging (optional)
+  # one instance globally
+  stf-log-rethinkdb:
+    image: "devicefarmer/stf:latest"
+    restart: "always"
+    networks:
+      - "devicefarmer"
+    env_file:
+      - "./rethinkdb.env"
+    command: "stf log-rethinkdb --connect-sub tcp://stf-triproxy-app:7150"
+
+  # stf-notify-hipchat:
+  # stf-notify-slack:
