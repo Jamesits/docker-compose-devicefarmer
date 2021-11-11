@@ -16,7 +16,12 @@ Basic usage:
 1. Replace the hardcoded session key in `stf-session.env` to a random value
 1. If HTTPS is required, edit `nginx.conf` and enable HTTPS server config
 1. Run `./up.sh` (you might need root to make permissions right)
+1. Point your browser to `http://your-ip` and login with name `admin` and email `admin@example.org`
 
 Backup:
 
 Backup the `deployment` directory.
+
+Common problems:
+
+- If you changed session secret, you must manually clear browser cookies
