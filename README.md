@@ -15,4 +15,8 @@ Basic usage:
 1. Edit `.env`, replace `100.97.3.116` with your own server hostname or IP
 1. Replace the hardcoded session key in `stf-session.env` to a random value
 1. If HTTPS is required, edit `nginx.conf` and enable HTTPS server config
-1. Run `./up.sh`
+1. Run `./up.sh` (you might need root to make permissions right)
+
+Backup:
+
+Backup the `deployment` directory.

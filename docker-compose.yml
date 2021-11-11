@@ -70,7 +70,7 @@ services:
     networks:
       - "devicefarmer"
     env_file:
-      - "./stf-session.env"
+      - "./deployment/stf-session.env"
       - "./rethinkdb.env"
     command: "stf app --port 80 --auth-url ${STF_AUTH_ENDPOINT} --websocket-url ${STF_WEBSOCKET_ENDPOINT}"
 
@@ -85,7 +85,7 @@ services:
     networks:
       - "devicefarmer"
     env_file:
-      - "./stf-session.env"
+      - "./deployment/stf-session.env"
       - "./rethinkdb.env"
     command: "stf auth-mock --port 80 --app-url ${STF_APP_ENDPOINT}"
 
@@ -184,7 +184,7 @@ services:
     env_file:
       - "./tls-self-signed.env"
       - "./rethinkdb.env"
-      - "./stf-session.env"
+      - "./deployment/stf-session.env"
     command: "stf websocket --port 80 --storage-url ${STF_STORAGE_ENDPOINT} --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170"
 
   # The api unit provides all the major RESTful APIs for STF. Users can generate their personal access token from STF UI and can use that token to access these api from any interface.
@@ -196,7 +196,7 @@ services:
       - "devicefarmer"
     env_file:
       - "./rethinkdb.env"
-      - "./stf-session.env"
+      - "./deployment/stf-session.env"
     command: "stf api --port 80 --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170 --connect-sub-dev tcp://stf-triproxy-dev:7250 --connect-push-dev tcp://stf-triproxy-dev:7270"
 
   # The groups-engine unit is the core of the device booking/partitioning system, it is made of four main functions ensuring in particular the consistency of operations ordered by the client side on groups (i.e. a group is an association of users, devices and a specification of time)
@@ -208,7 +208,7 @@ services:
       - "devicefarmer"
     env_file:
       - "./rethinkdb.env"
-      - "./stf-session.env"
+      - "./deployment/stf-session.env"
     command: "stf groups-engine --connect-sub tcp://stf-triproxy-app:7150 --connect-push tcp://stf-triproxy-app:7170 --connect-sub-dev tcp://stf-triproxy-dev:7250 --connect-push-dev tcp://stf-triproxy-dev:7270"
 
   # logging (optional)

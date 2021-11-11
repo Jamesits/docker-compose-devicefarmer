@@ -1,4 +1,4 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-docker-compose down --remove-orphans
+docker-compose -f docker-compose.yml -f docker-compose.watchtower.yml down --remove-orphans

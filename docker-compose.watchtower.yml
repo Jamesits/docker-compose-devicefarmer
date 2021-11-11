@@ -1,0 +1,13 @@
+# Automatically update containers
+# Will result in downtime and possible data loss, obviously
+
+version: "2.4"
+
+services:
+  watchtower:
+    image: "containrrr/watchtower"
+    restart: "always"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/etc/localtime:/etc/localtime:ro"
+    command: "--cleanup --include-restarting --include-stopped --revive-stopped --rolling-restart"
